@@ -40,10 +40,10 @@ func (d *Definition) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return err
 	}
 
-	return d.decodeStep(data)
+	return d.decode(data)
 }
 
-func (d *Definition) decodeStep(data map[string]interface{}) error {
+func (d *Definition) decode(data map[string]interface{}) error {
 	for k, v := range data {
 		if k != "steps" {
 			d.parameters[k] = v
@@ -54,7 +54,7 @@ func (d *Definition) decodeStep(data map[string]interface{}) error {
 					switch m := s.(type) {
 					case map[string]interface{}:
 						var step Definition
-						if err := step.decodeStep(m); err != nil {
+						if err := step.decode(m); err != nil {
 							return err
 						}
 
