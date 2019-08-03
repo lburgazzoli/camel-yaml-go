@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -15,50 +14,58 @@ import (
 // ******************************************
 
 type Definition struct {
+	id         string
 	parameters map[string]interface{}
 	steps      []Definition
 }
 
-func (d *Definition) MarshalJSON() ([]byte, error) {
-	return nil, nil
-}
+func (d *Definition) encode() (map[interface{}]interface{}, error) {
+	data := make(map[interface{}]interface{})
 
-func (d *Definition) UnmarshalJSON(b []byte) error {
-	return nil
-}
-
-func (d *Definition) MarshalYAML() (interface{}, error) {
-	return nil, nil
-}
-
-func (d *Definition) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	d.parameters = make(map[string]interface{})
-	d.steps = make([]Definition, 0)
-
-	data := make(map[string]interface{})
-	if err := unmarshal(&data); err != nil {
-		return err
+	for k, v := range d.parameters {
+		data[k] = v
 	}
 
-	return d.decode(data)
+	if len(d.steps) > 0 {
+		steps := make([]map[string]interface{}, 0, len(d.steps))
+
+		for _, s := range d.steps {
+			sd, err := s.encode()
+			if err != nil {
+				return nil, err
+			}
+
+			steps = append(steps, map[string]interface{}{s.id: sd})
+		}
+
+		data["steps"] = steps
+
+	}
+	return data, nil
 }
 
-func (d *Definition) decode(data map[string]interface{}) error {
+func (d *Definition) decode(data map[interface{}]interface{}) error {
+	d.parameters = make(map[string]interface{})
+
 	for k, v := range data {
 		if k != "steps" {
-			d.parameters[k] = v
+			d.parameters[k.(string)] = v
 		} else {
 			switch t := v.(type) {
 			case []interface{}:
+				d.steps = make([]Definition, 0, len(t))
+
 				for _, s := range t {
 					switch m := s.(type) {
-					case map[string]interface{}:
-						var step Definition
-						if err := step.decode(m); err != nil {
-							return err
-						}
+					case map[interface{}]interface{}:
+						for k, v := range m {
+							step := Definition{id: k.(string)}
+							if err := step.decode(v.(map[interface{}]interface{})); err != nil {
+								return err
+							}
 
-						d.steps = append(d.steps, step)
+							d.steps = append(d.steps, step)
+						}
 					default:
 						return errors.New("")
 					}
@@ -80,24 +87,53 @@ func (d *Definition) decode(data map[string]interface{}) error {
 
 // Route --
 type Route struct {
-	raw map[string]Definition
-}
-
-func (r *Route) MarshalJSON() ([]byte, error) {
-	return json.Marshal(&r.raw)
-}
-
-func (r *Route) UnmarshalJSON(b []byte) error {
-	return json.Unmarshal(b, &r.raw)
+	parameters map[string]interface{}
+	definition Definition
 }
 
 func (r *Route) MarshalYAML() (interface{}, error) {
-	return yaml.Marshal(&r.raw)
+	data := make(map[string]interface{})
+
+	for k, v := range r.parameters {
+		data[k] = v
+	}
+
+	if r.definition.id != "" {
+		d, err := r.definition.encode()
+		if err != nil {
+			return nil, err
+		}
+
+		data[r.definition.id] = d
+	}
+
+	return yaml.Marshal(data)
 }
 
 func (r *Route) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	r.raw = make(map[string]Definition)
-	return unmarshal(&r.raw)
+	data := make(map[interface{}]interface{})
+	if err := unmarshal(&data); err != nil {
+		return err
+	}
+
+	r.parameters = make(map[string]interface{})
+
+	for k, v := range data {
+		switch t := v.(type) {
+		case map[interface{}]interface{}:
+			r.definition.id = k.(string)
+
+			if err := r.definition.decode(t); err != nil {
+				return err
+			}
+
+			delete(data, k)
+		default:
+			r.parameters[k.(string)] = v
+		}
+	}
+
+	return nil
 }
 
 // ******************************************
@@ -141,11 +177,5 @@ func main() {
 		panic(err)
 	}
 
-	b, err := yaml.Marshal(&r)
-	if err != nil {
-		panic(err)
-	}
-
 	fmt.Printf("%+v\n", r)
-	fmt.Printf("%s\n", string(b))
 }
