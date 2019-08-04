@@ -13,58 +13,121 @@ import (
 //
 // ******************************************
 
+type Property struct {
+	ID    string
+	Value interface{}
+}
+
 type Definition struct {
-	id         string
-	parameters map[string]interface{}
-	steps      []Definition
+	ID         string
+	Value      string
+	Parameters []Property
+	Attributes []Property
+	Outputs    []Definition
+}
+
+func (d *Definition) MarshalYAML() (interface{}, error) {
+	definition, err := d.encode()
+	if err != nil {
+		return nil, err
+	}
+
+	answer := make(map[interface{}]interface{})
+	answer[d.ID] = definition
+
+	for _, p := range d.Attributes {
+		answer[p.ID] = p.Value
+	}
+
+	return answer, nil
+}
+
+func (d *Definition) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	data := make(map[interface{}]interface{})
+	if err := unmarshal(&data); err != nil {
+		return err
+	}
+
+	d.Parameters = make([]Property, 0)
+	d.Attributes = make([]Property, 0)
+
+	for k, v := range data {
+		switch t := v.(type) {
+		case map[interface{}]interface{}:
+			d.ID = k.(string)
+
+			if err := d.decode(t); err != nil {
+				return err
+			}
+
+			delete(data, k)
+		default:
+			d.Attributes = append(d.Attributes, Property{ID: k.(string), Value: v})
+		}
+	}
+
+	return nil
 }
 
 func (d *Definition) encode() (map[interface{}]interface{}, error) {
-	data := make(map[interface{}]interface{})
-
-	for k, v := range d.parameters {
-		data[k] = v
+	if d.Value != "" {
+		return map[interface{}]interface{}{d.ID: d.Value}, nil
 	}
 
-	if len(d.steps) > 0 {
-		steps := make([]map[string]interface{}, 0, len(d.steps))
+	definition := make(map[interface{}]interface{})
 
-		for _, s := range d.steps {
+	for _, p := range d.Parameters {
+		definition[p.ID] = p.Value
+	}
+
+	if len(d.Outputs) > 0 {
+		steps := make([]map[string]interface{}, 0, len(d.Outputs))
+
+		for _, s := range d.Outputs {
 			sd, err := s.encode()
 			if err != nil {
 				return nil, err
 			}
 
-			steps = append(steps, map[string]interface{}{s.id: sd})
+			steps = append(steps, map[string]interface{}{s.ID: sd})
 		}
 
-		data["steps"] = steps
+		definition["steps"] = steps
 
 	}
-	return data, nil
+
+	return definition, nil
 }
 
 func (d *Definition) decode(data map[interface{}]interface{}) error {
-	d.parameters = make(map[string]interface{})
-
 	for k, v := range data {
 		if k != "steps" {
-			d.parameters[k.(string)] = v
+			d.Parameters = append(d.Parameters, Property{ID: k.(string), Value: v})
 		} else {
 			switch t := v.(type) {
 			case []interface{}:
-				d.steps = make([]Definition, 0, len(t))
+				d.Outputs = make([]Definition, 0, len(t))
 
-				for _, s := range t {
-					switch m := s.(type) {
+				for _, step := range t {
+					switch definition := step.(type) {
 					case map[interface{}]interface{}:
-						for k, v := range m {
-							step := Definition{id: k.(string)}
-							if err := step.decode(v.(map[interface{}]interface{})); err != nil {
-								return err
+						for k, v := range definition {
+							step := Definition{ID: k.(string)}
+							switch content := v.(type) {
+							case map[interface{}]interface{}:
+								if len(content) != 1 {
+									return errors.New("")
+								}
+								if err := step.decode(content); err != nil {
+									return err
+								}
+							case string:
+								step.Value = content
+							default:
+								return errors.New("")
 							}
 
-							d.steps = append(d.steps, step)
+							d.Outputs = append(d.Outputs, step)
 						}
 					default:
 						return errors.New("")
@@ -87,53 +150,7 @@ func (d *Definition) decode(data map[interface{}]interface{}) error {
 
 // Route --
 type Route struct {
-	parameters map[string]interface{}
-	definition Definition
-}
-
-func (r *Route) MarshalYAML() (interface{}, error) {
-	data := make(map[string]interface{})
-
-	for k, v := range r.parameters {
-		data[k] = v
-	}
-
-	if r.definition.id != "" {
-		d, err := r.definition.encode()
-		if err != nil {
-			return nil, err
-		}
-
-		data[r.definition.id] = d
-	}
-
-	return yaml.Marshal(data)
-}
-
-func (r *Route) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	data := make(map[interface{}]interface{})
-	if err := unmarshal(&data); err != nil {
-		return err
-	}
-
-	r.parameters = make(map[string]interface{})
-
-	for k, v := range data {
-		switch t := v.(type) {
-		case map[interface{}]interface{}:
-			r.definition.id = k.(string)
-
-			if err := r.definition.decode(t); err != nil {
-				return err
-			}
-
-			delete(data, k)
-		default:
-			r.parameters[k.(string)] = v
-		}
-	}
-
-	return nil
+	Definition
 }
 
 // ******************************************
@@ -163,19 +180,28 @@ func (r *Route) DeepCopy() *Route {
 }
 
 const data string = `
+id: test
 from:
   uri: timer:tick?period=3s
   steps:
     - set-body:
         constant: Hello world!
+    - to: "stream:out"
 `
 
 func main() {
 	var r Route
 
-	if err := yaml.Unmarshal([]byte(data), &r); err != nil {
+	err := yaml.Unmarshal([]byte(data), &r)
+	if err != nil {
+		panic(err)
+	}
+
+	b, err := yaml.Marshal(&r)
+	if err != nil {
 		panic(err)
 	}
 
 	fmt.Printf("%+v\n", r)
+	fmt.Printf("%s\n", string(b[:]))
 }
