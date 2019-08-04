@@ -14,7 +14,7 @@ import (
 
 type Property struct {
 	Key   string
-	Value interface{}
+	Value string
 }
 
 type Definition struct {
@@ -25,25 +25,33 @@ type Definition struct {
 }
 
 func (d *Definition) MarshalYAML() (interface{}, error) {
-	return nil, nil
+	node := yamlv3.Node{
+		Kind: yamlv3.MappingNode,
+	}
+
+	if d.Value != "" {
+		node.Content = append(node.Content, &yamlv3.Node{Kind: yamlv3.ScalarNode, Value: d.ID})
+		node.Content = append(node.Content, &yamlv3.Node{Kind: yamlv3.ScalarNode, Value: d.Value})
+	} else {
+		node.Content = append(node.Content, &yamlv3.Node{Kind: yamlv3.ScalarNode, Value: d.ID})
+		node.Content = append(node.Content, d.encode())
+	}
+
+	return node, nil
 }
 
 func (d *Definition) UnmarshalYAML(node *yamlv3.Node) error {
-	switch node.Kind {
-	case yamlv3.MappingNode:
-		for i := 0; i < len(node.Content); i += 2 {
-			switch {
-			case node.Content[i+1].Kind == yamlv3.MappingNode:
-				d.ID = node.Content[i].Value
-				d.decode(node.Content[i+1])
-			case node.Content[i+1].Kind == yamlv3.ScalarNode:
-				d.ID = node.Content[i].Value
-				d.Value = node.Content[i+1].Value
-			default:
-				return fmt.Errorf("unknown node kind %v", node.Kind)
-			}
-		}
-	default:
+	if node.Kind != yamlv3.MappingNode {
+		return fmt.Errorf("unknown node kind %v", node.Kind)
+	}
+
+	if node.Content[1].Kind == yamlv3.MappingNode {
+		d.ID = node.Content[0].Value
+		d.decode(node.Content[1])
+	} else if node.Content[1].Kind == yamlv3.ScalarNode {
+		d.ID = node.Content[0].Value
+		d.Value = node.Content[1].Value
+	} else {
 		return fmt.Errorf("unknown node kind %v", node.Kind)
 	}
 
@@ -67,6 +75,24 @@ func (d *Definition) decode(node *yamlv3.Node) error {
 	}
 
 	return nil
+}
+
+func (d *Definition) encode() *yamlv3.Node {
+	node := yamlv3.Node{
+		Kind: yamlv3.MappingNode,
+	}
+
+	for _, p := range d.Parameters {
+		node.Content = append(node.Content, &yamlv3.Node{Kind: yamlv3.ScalarNode, Value: p.Key})
+		node.Content = append(node.Content, &yamlv3.Node{Kind: yamlv3.ScalarNode, Value: p.Value})
+	}
+
+	for _, o := range d.Outputs {
+		node.Content = append(node.Content, &yamlv3.Node{Kind: yamlv3.MappingNode})
+		node.Content = append(node.Content, o.encode())
+	}
+
+	return &node
 }
 
 type Route struct {
@@ -114,4 +140,11 @@ func Run() {
 	}
 
 	fmt.Printf("%+v\n", r)
+
+	b, err := yamlv3.Marshal(&r)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("%s\n", string(b[:]))
 }
